@@ -14,6 +14,7 @@ use ratatui::{
 };
 
 #[derive(Debug, Clone)]
+#[derive(PartialEq)]
 struct Dot {
     x: u16,
     y: u16,
@@ -67,6 +68,7 @@ fn main() -> io::Result<()> {
 
 const GAME_WIDTH: u16 = 60;
 const GAME_HEIGHT: u16 = 25;
+const GRID_SIZE: u16 = GAME_WIDTH * GAME_HEIGHT;
 
 impl App {
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
@@ -109,8 +111,8 @@ impl App {
     fn update(&mut self) -> io::Result<()> {
         let now = Instant::now();
         if now.duration_since(self.last_update) >= Duration::from_millis(150) {
+            self.handle_death();
             self.handle_tail();
-            self.handle_food();
             self.move_dot();
             self.last_update = now;
         }
@@ -125,16 +127,30 @@ impl App {
         let max_y = game_height.saturating_sub(3); 
         
         if self.move_up && self.dot.y > 0 {
+            self.handle_food();
             self.dot.y -= 1;
+
         }
         if self.move_right && self.dot.x < max_x {
+            self.handle_food();
             self.dot.x += 1;
+            if self.dot.x < max_x {
+                self.handle_food();
+                self.dot.x += 1;
+            }
         }
         if self.move_left && self.dot.x > 0 {
+            self.handle_food();
             self.dot.x -= 1;
+            if self.dot.x > 0 {
+                self.handle_food();
+                self.dot.x -= 1;
+            }
         }
         if self.move_down && self.dot.y < max_y {
+            self.handle_food();
             self.dot.y += 1;
+
         }
     }
     
@@ -157,6 +173,9 @@ impl App {
     }
 
     fn spawn_food_randomly(&mut self) {
+        if self.tail_length == (GRID_SIZE - 1) as u8 {
+            // TODO win here
+        }
         let mut rng = rand::thread_rng();
 
         let game_width: u16 = GAME_WIDTH;
@@ -164,10 +183,28 @@ impl App {
         let max_x = game_width.saturating_sub(3);
         let max_y = game_height.saturating_sub(3);
 
-        self.food = Food {
-            x: rng.gen_range(0..=max_x),
-            y: rng.gen_range(0..=max_y)
-        };
+        let x = rng.gen_range(0..=max_x);
+        let y = rng.gen_range(0..=max_y);
+
+        if x == self.dot.x && y == self.dot.y {
+            self.spawn_food_randomly();
+        }
+        // Check if the generated position conflicts with any tail segment
+        let conflicts_with_tail = self.tail.iter().any(|tail_dot| {
+            tail_dot.x == x && tail_dot.y == y
+        });
+
+        if conflicts_with_tail {
+            self.spawn_food_randomly();
+        }
+
+        self.food = Food {x,y};
+    }
+
+    fn handle_death(&mut self) {
+        if self.tail.contains(&self.dot) {
+            self.exit();
+        }
     }
 
     fn exit(&mut self) {
@@ -253,7 +290,6 @@ impl Widget for &App {
 
 
     for y in 0..game_area.height {
-        // Create line with one dot
         let mut line_chars: Vec<char> = " ".repeat(game_area.width.saturating_sub(2) as usize).chars().collect();
 
         // Place the player
