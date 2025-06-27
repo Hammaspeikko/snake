@@ -41,7 +41,8 @@ pub struct App {
     tail: VecDeque<Dot>,
     tail_length: u16,
     food: Food,
-    show_popup: bool,
+    show_game_over_popup: bool,
+    show_win_popup: bool,
 }
 
 impl Default for App {
@@ -58,7 +59,8 @@ impl Default for App {
             move_down: false,
             tail: VecDeque::new(),
             tail_length: 3,
-            show_popup: false,
+            show_game_over_popup: false,
+            show_win_popup: false,
         }
     }
 }
@@ -80,7 +82,7 @@ impl App {
         while !self.exit {
             terminal.draw(|frame| self.draw(frame))?;
             self.handle_events()?;
-            if !self.show_popup {
+            if !self.show_game_over_popup && !self.show_win_popup{
                 self.update()?;
             }
         }
@@ -90,12 +92,14 @@ impl App {
     fn draw(&self, frame: &mut Frame) {
         frame.render_widget(self, frame.area());
         
-        if self.show_popup {
-            self.render_popup(frame);
+        if self.show_game_over_popup {
+            self.render_game_over_popup(frame);
+        }else if self.show_win_popup {
+            self.render_win_popup(frame);
         }
     }
 
-    fn render_popup(&self, frame: &mut Frame) {
+    fn render_game_over_popup(&self, frame: &mut Frame) {
         // Calculate popup size and position (centered)
         let popup_area = centered_rect(40, 20, frame.area());
         
@@ -124,6 +128,36 @@ impl App {
         frame.render_widget(popup_paragraph, popup_area);
     }
 
+    fn render_win_popup(&self, frame: &mut Frame) {
+        // Calculate popup size and position (centered)
+        let popup_area = centered_rect(40, 20, frame.area());
+
+        // Clear the area behind the popup
+        frame.render_widget(Clear, popup_area);
+
+        let popup_text = vec![
+            Line::from(""),
+            Line::from("You won!".bold().yellow()),
+            Line::from(""),
+            Line::from(vec![
+                "You scored: ".bold(),
+                self.counter.to_string().blue().bold(),
+            ])
+        ];
+
+        let popup_block = Block::bordered()
+            .title(" Popup ".bold())
+            .border_set(border::ROUNDED)
+            .style(Style::default().bg(Color::DarkGray));
+
+        let popup_paragraph = Paragraph::new(Text::from(popup_text))
+            .block(popup_block)
+            .alignment(Alignment::Center);
+
+        frame.render_widget(popup_paragraph, popup_area);
+    }
+
+
     fn handle_events(&mut self) -> io::Result<()> {
         if event::poll(Duration::from_millis(50))? {
             match event::read()? {
@@ -137,7 +171,7 @@ impl App {
     }
     
     fn handle_key_event(&mut self, key_event: KeyEvent) {
-        if self.show_popup {
+        if self.show_game_over_popup {
             self.exit();
         }
         
@@ -217,8 +251,7 @@ impl App {
 
 fn spawn_food_randomly(&mut self) {
     if self.tail_length == (GRID_SIZE - 1) {
-        // TODO win here
-        return;
+        self.show_win_popup = true;
     }
     
     let mut rng = rand::thread_rng();
@@ -258,7 +291,7 @@ fn spawn_food_randomly(&mut self) {
 
     fn handle_death(&mut self) {
         if self.tail.contains(&self.dot) {
-           self.show_popup = true;
+           self.show_game_over_popup = true;
         }
     }
 
@@ -364,20 +397,17 @@ impl Widget for &App {
 
     let mut content = vec![];
 
-
     for y in 0..game_area.height {
         let mut line_chars: Vec<char> = " ".repeat(game_area.width.saturating_sub(2) as usize).chars().collect();
-
-        // Place the player
-        if y == self.dot.y {
-            if (self.dot.x as usize) < line_chars.len() {
-                line_chars[self.dot.x as usize] = '●';
-            }
-        }
 
         for tail_dot in &self.tail {
             if y == tail_dot.y {
                 line_chars[tail_dot.x as usize] = '○';
+            }
+        }
+        if y == self.dot.y {
+            if (self.dot.x as usize) < line_chars.len() {
+                line_chars[self.dot.x as usize] = '●';
             }
         }
 
