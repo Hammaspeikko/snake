@@ -5,13 +5,15 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use rand::Rng;
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
-    style::{Stylize},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Stylize, Color},
     symbols::border,
     text::{Line, Text},
-    widgets::{Block, Paragraph, Widget},
+    widgets::{Block, Clear, Paragraph, Widget},
     DefaultTerminal, Frame,
+
 };
+use ratatui::style::Style;
 
 #[derive(Debug, Clone)]
 #[derive(PartialEq)]
@@ -37,8 +39,9 @@ pub struct App {
     move_up: bool,
     move_down: bool,
     tail: VecDeque<Dot>,
-    tail_length: u8,
+    tail_length: u16,
     food: Food,
+    show_popup: bool,
 }
 
 impl Default for App {
@@ -54,7 +57,8 @@ impl Default for App {
             move_up: true,
             move_down: false,
             tail: VecDeque::new(),
-            tail_length: 1,
+            tail_length: 3,
+            show_popup: false,
         }
     }
 }
@@ -76,13 +80,48 @@ impl App {
         while !self.exit {
             terminal.draw(|frame| self.draw(frame))?;
             self.handle_events()?;
-            self.update()?;
+            if !self.show_popup {
+                self.update()?;
+            }
         }
         Ok(())
     }
 
     fn draw(&self, frame: &mut Frame) {
         frame.render_widget(self, frame.area());
+        
+        if self.show_popup {
+            self.render_popup(frame);
+        }
+    }
+
+    fn render_popup(&self, frame: &mut Frame) {
+        // Calculate popup size and position (centered)
+        let popup_area = centered_rect(40, 20, frame.area());
+        
+        // Clear the area behind the popup
+        frame.render_widget(Clear, popup_area);
+        
+        let popup_text = vec![
+            Line::from(""),
+            Line::from("Game over!".bold().yellow()),
+            Line::from(""),
+            Line::from(vec![
+                "You scored: ".bold(),
+                self.counter.to_string().blue().bold(),
+            ])
+        ];
+        
+        let popup_block = Block::bordered()
+            .title(" Popup ".bold())
+            .border_set(border::ROUNDED)
+            .style(Style::default().bg(Color::DarkGray));
+        
+        let popup_paragraph = Paragraph::new(Text::from(popup_text))
+            .block(popup_block)
+            .alignment(Alignment::Center);
+        
+        frame.render_widget(popup_paragraph, popup_area);
     }
 
     fn handle_events(&mut self) -> io::Result<()> {
@@ -98,6 +137,10 @@ impl App {
     }
     
     fn handle_key_event(&mut self, key_event: KeyEvent) {
+        if self.show_popup {
+            self.exit();
+        }
+        
         match key_event.code {
             KeyCode::Char('q') => self.exit(),
             KeyCode::Left => self.move_left(),
@@ -157,7 +200,7 @@ impl App {
     fn handle_tail(&mut self) {
         self.tail.push_front(self.dot.clone());
 
-        if self.tail_length < self.tail.len() as u8 {
+        if self.tail_length < self.tail.len() as u16 {
             self.tail.pop_back();
         }
         
@@ -172,38 +215,50 @@ impl App {
         }
     }
 
-    fn spawn_food_randomly(&mut self) {
-        if self.tail_length == (GRID_SIZE - 1) as u8 {
-            // TODO win here
-        }
-        let mut rng = rand::thread_rng();
+fn spawn_food_randomly(&mut self) {
+    if self.tail_length == (GRID_SIZE - 1) {
+        // TODO win here
+        return;
+    }
+    
+    let mut rng = rand::thread_rng();
+    let game_width: u16 = GAME_WIDTH;
+    let game_height: u16 = GAME_HEIGHT;
+    let max_x = game_width.saturating_sub(3);
+    let max_y = game_height.saturating_sub(3);
 
-        let game_width: u16 = GAME_WIDTH;
-        let game_height: u16 = GAME_HEIGHT;
-        let max_x = game_width.saturating_sub(3);
-        let max_y = game_height.saturating_sub(3);
-
-        let x = rng.gen_range(0..=max_x);
+    loop {
+        let mut x = rng.gen_range(0..=max_x);
         let y = rng.gen_range(0..=max_y);
 
-        if x == self.dot.x && y == self.dot.y {
-            self.spawn_food_randomly();
+        // Ensure x is even (since horizontal movement is by 2)
+        if x % 2 != 0 {
+            x = if x == max_x { x - 1 } else { x + 1 };
         }
+
+        // Check if the generated position conflicts with the head
+        if x == self.dot.x && y == self.dot.y {
+            continue;
+        }
+
         // Check if the generated position conflicts with any tail segment
         let conflicts_with_tail = self.tail.iter().any(|tail_dot| {
             tail_dot.x == x && tail_dot.y == y
         });
 
         if conflicts_with_tail {
-            self.spawn_food_randomly();
+            continue;
         }
 
-        self.food = Food {x,y};
+        // If we reach here, the position is valid
+        self.food = Food { x, y };
+        break;
     }
+}
 
     fn handle_death(&mut self) {
         if self.tail.contains(&self.dot) {
-            self.exit();
+           self.show_popup = true;
         }
     }
 
@@ -246,6 +301,27 @@ impl App {
             self.move_down = false;
         }
     }
+}
+
+// Helper function to create a centered rectangle
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
 }
 
 impl Widget for &App {
